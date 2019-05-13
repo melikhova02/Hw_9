@@ -1,0 +1,119 @@
+---
+title: "Математическое моделирование, лабораторная 9"
+author: "Мелихова И.С."
+output:
+  html_document:
+    df_print: paged
+  html_notebook: default
+  pdf_document: default
+  word_document: default
+---
+
+## Математическое моделирование
+
+### Практика 9
+
+*Модели*: SVM   
+*Данные*: Auto {ISLR} 
+
+### Машины опорных векторов        
+
+Пример на данных по автомобилям: Auto {ISLR}.
+
+Построим график разброса наблюдений в пространств предикторов, класс показан цветом ('Yes', 'No'). 
+
+Зависимая переменная high.mpg, объсняющие: displacement, horsepower.
+
+Переменная high.mpg – высокое значение mpg (сколько автомобиль проходит на галлоне топлива).
+
+Перменная high.mpg принимает значение Yes, если mpg > 23, иначе - Nо.
+
+```{r, message = F, warning = F}
+library('e1071')     # SVM
+library('ROCR')      # ROC-кривые
+library('ISLR')      # данные по экспрессии генов
+library('GGally')
+my.seed <- 1
+attach(Auto) 
+head(Auto)
+str(Auto)
+# новая переменная 
+high.mpg <- ifelse(mpg < 23, 'No', 'Yes') 
+# присоединяем к таблице данных 
+Auto <- data.frame(Auto, high.mpg) 
+high.mpg <- as.factor(high.mpg)
+ggp <- ggpairs(Auto[, c('high.mpg', 'displacement', 'horsepower')], 
+               mapping = ggplot2::aes(color = high.mpg))
+print(ggp, progress = F)
+```
+
+```{r, message = F, warning = F, fig.height = 6, fig.width = 6}
+# таблица с данными, отклик — фактор 
+dat <- data.frame(displacement, horsepower  , high.mpg) 
+# обучающая выборка 
+train <- sample(1:nrow(dat), nrow(dat)/2)
+# SVM с радиальным ядром и маленьким cost
+svmfit <- svm(high.mpg ~ ., data = dat[train, ], kernel = "radial", 
+              gamma = 1, cost = 1)
+plot(svmfit, dat[train, ])
+summary(svmfit)
+# SVM с радиальным ядром и большим cost
+svmfit <- svm(high.mpg ~ ., data = dat[train, ], kernel = "radial", 
+              gamma = 1, cost = 1e5)
+plot(svmfit, dat[train, ])
+summary(svmfit)
+# перекрёстная проверка
+set.seed(my.seed)
+tune.out <- tune(svm, high.mpg ~ ., data = dat[train, ], kernel = "radial", 
+                 ranges = list(cost = c(0.1, 1, 10, 100, 1000),
+                               gamma = c(0.5, 1, 2, 3, 4)))
+summary(tune.out)
+```
+
+Построим матрицу неточностей для прогноза по лучшей модели и рассчитаем MSE.
+
+```{r, message = F, warning = F, fig.height = 6, fig.width = 6}
+# матрица неточностей для прогноза по лучшей модели
+matrix <- table(true = dat[-train, "high.mpg"], 
+      pred = predict(tune.out$best.model, newdata = dat[-train, ]))
+bestmod <- tune.out$best.model
+summary(bestmod)
+#MSE
+sum(diag(matrix))/sum(matrix) 
+```
+
+
+## ROC-кривые
+
+```{r, message = F, warning = F, fig.height = 6, fig.width = 6}
+# функция построения ROC-кривой: pred -- прогноз, truth -- факт
+rocplot <- function(pred, truth, ...){
+    predob = prediction(pred, truth)
+    perf = performance(predob, "tpr", "fpr")
+    plot(perf,...)}
+# последняя оптимальная модель
+svmfit.opt <- svm(high.mpg ~ ., data = dat[train, ], 
+                  kernel = "radial", gamma = 2, cost = 0.1, decision.values = T)
+# количественные модельные значения, на основе которых присваивается класс
+fitted <- attributes(predict(svmfit.opt, dat[train, ],
+                             decision.values = TRUE))$decision.values
+# график для обучающей выборки
+par(mfrow = c(1, 2))
+rocplot(fitted, dat[train, "high.mpg"], main = "Training Data")
+# более гибкая модель (gamma выше)
+svmfit.flex = svm(high.mpg ~ ., data = dat[train, ], kernel = "radial", 
+                  gamma = 50, cost = 1, decision.values = T)
+fitted <- attributes(predict(svmfit.flex, dat[train, ], 
+                             decision.values = T))$decision.values
+rocplot(fitted, dat[train,"high.mpg"], add = T, col = "red")
+# график для тестовой выборки
+fitted <- attributes(predict(svmfit.opt, dat[-train, ], 
+                             decision.values = T))$decision.values
+rocplot(fitted, dat[-train, "high.mpg"], main = "Test Data")
+fitted <- attributes(predict(svmfit.flex, dat[-train, ], 
+                             decision.values = T))$decision.values
+rocplot(fitted, dat[-train, "high.mpg"], add = T, col = "red")
+```
+
+
+Построенные ROC-кривые показывают большое количество точных предсказаний, что говорит о правильности выбора объясняющих перменных, однако более гибкая модель (красный цвет) хорошо работает с обучающей выборкой, но качество модели немного падает на тестовых данных, в случае другой модели качество почти не изменяется. За наилучшую и примем её- последнюю оптимальную модель.
